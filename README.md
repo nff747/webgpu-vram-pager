@@ -1,5 +1,8 @@
 <div align="center">
 
+<img src="assets/banner.jpg" width="800" alt="Project Banner">
+
+
 # 🧠 webgpu-vram-pager
 
 **Dynamic Memory Paging & PCIe Streaming for Browser-Based LLMs**
