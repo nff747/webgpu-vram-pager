@@ -3,3 +3,4 @@ export { WebGPUContext } from './core/WebGPUContext';
 export { WeightStreamer } from './streaming/WeightStreamer';
 export { ComputePipeline } from './compute/ComputePipeline';
 export type * from './types';
+export { RingBufferPool } from './core/RingBuffer';

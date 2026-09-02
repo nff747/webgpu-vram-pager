@@ -1,58 +1,39 @@
-/**
- * ═══════════════════════════════════════════════════════════════════
- * VRAM Pager — Core Paging Engine
- * 
- * Orchestrates the chunking of massive LLM tensors (e.g., 8B weights).
- * Virtualizes WebGPU memory by creating a pool of GPU buffers that 
- * respect the browser's maxStorageBufferBindingSize limit.
- * ═══════════════════════════════════════════════════════════════════
- */
-
 import { PagerOptions, PagedTensor, ChunkDescriptor } from '../types';
 import { WebGPUContext } from './WebGPUContext';
 import { WeightStreamer } from '../streaming/WeightStreamer';
+import { RingBufferPool } from './RingBuffer';
 
 export class PagerEngine {
   private context: WebGPUContext;
   private streamer: WeightStreamer | null = null;
-  
-  // The physical GPU buffers allocated on the device
-  private hardwareBuffers: GPUBuffer[] = [];
-  
-  // The calculated safe limit for this specific browser/OS
+  private ringPool: RingBufferPool | null = null;
   private safeBindingLimit: number = 0;
 
   constructor(private options: PagerOptions = {}) {
     this.context = new WebGPUContext();
   }
 
-  /**
-   * Initializes the engine, probes limits, and allocates the ring pool.
-   */
   async init(): Promise<void> {
     await this.context.init();
     
-    // Use override if provided, otherwise use browser limits minus a 5% safety margin
     const hardwareLimit = this.context.limits!.maxStorageBufferBindingSize;
     this.safeBindingLimit = this.options.maxBufferSize 
       ? Math.min(this.options.maxBufferSize, hardwareLimit)
       : Math.floor(hardwareLimit * 0.95);
 
+    const poolSize = this.options.ringBufferSize || 4;
+    this.ringPool = new RingBufferPool(this.context.device!, poolSize, this.safeBindingLimit);
     this.streamer = new WeightStreamer(this.context.device!, this.safeBindingLimit);
     
     if (this.options.debug) {
-      console.log(\`[VRAM Pager] Safe binding limit established at \${(this.safeBindingLimit / 1024 / 1024).toFixed(2)} MB\`);
+      console.log(`[VRAM Pager] Safe binding limit established at ${(this.safeBindingLimit / 1024 / 1024).toFixed(2)} MB`);
+      console.log(`[VRAM Pager] Ring Buffer pool created with ${poolSize} buffers`);
     }
   }
 
-  /**
-   * Virtualizes a massive tensor. Returns a mapping descriptor that
-   * instructions the compute pipeline how to iterate through the chunks.
-   */
   public allocatePagedTensor(id: string, totalBytes: number): PagedTensor {
-    if (!this.context.device) throw new Error('Pager not initialized');
+    if (!this.context.device || !this.ringPool) throw new Error('Pager not initialized');
     
-    // Calculate required chunks based on binding limits
     const numChunks = Math.ceil(totalBytes / this.safeBindingLimit);
     const chunks: ChunkDescriptor[] = [];
     
@@ -62,22 +43,11 @@ export class PagerEngine {
     for (let i = 0; i < numChunks; i++) {
       const chunkSize = Math.min(remainingBytes, this.safeBindingLimit);
       
-      // Allocate the physical GPU buffer for this chunk
-      const buffer = this.context.device.createBuffer({
-        size: chunkSize,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        // Align label for WebGPU debugging
-        label: \`Tensor_\${id}_Chunk_\${i}\`
-      });
-      
-      this.hardwareBuffers.push(buffer);
-      const bufferIndex = this.hardwareBuffers.length - 1;
-
       chunks.push({
-        id: \`\${id}_\${i}\`,
+        id: `${id}_${i}`,
         byteOffset: currentOffset,
         byteLength: chunkSize,
-        bufferIndex
+        bufferIndex: -1 // Will be assigned dynamically from the ring buffer
       });
 
       remainingBytes -= chunkSize;
@@ -85,44 +55,72 @@ export class PagerEngine {
     }
 
     if (this.options.debug) {
-      console.log(\`[VRAM Pager] Tensor '\${id}' (\${(totalBytes / 1024 / 1024).toFixed(2)} MB) partitioned into \${numChunks} physical chunks.\`);
+      console.log(`[VRAM Pager] Tensor '${id}' (${(totalBytes / 1024 / 1024).toFixed(2)} MB) partitioned into ${numChunks} logical chunks.`);
     }
 
     return { id, totalBytes, chunks };
   }
 
-  /**
-   * Access underlying GPU buffer by index.
-   */
   public getPhysicalBuffer(index: number): GPUBuffer {
-    return this.hardwareBuffers[index];
+    if (!this.ringPool) throw new Error('Pager not initialized');
+    return this.ringPool.getBuffer(index);
   }
 
   /**
-   * Upload data directly to a paged tensor.
+   * Asynchronously writes tensor data using mapAsync for large chunks to avoid GC spikes
    */
-  public writeTensorData(tensor: PagedTensor, data: ArrayBuffer): void {
-    if (!this.streamer) throw new Error('Streamer not initialized');
+  public async writeTensorDataAsync(tensor: PagedTensor, data: ArrayBuffer): Promise<void> {
+    if (!this.streamer || !this.ringPool) throw new Error('Not initialized');
     
     let sourceOffset = 0;
     
-    // Route data to the correct physical chunks
     for (const chunk of tensor.chunks) {
-      const chunkData = data.slice(sourceOffset, sourceOffset + chunk.byteLength);
-      const buffer = this.getPhysicalBuffer(chunk.bufferIndex);
+      // Acquire mapped buffer from Ring Pool
+      const { buffer, index, arrayBuffer } = await this.ringPool.acquireMapped();
+      chunk.bufferIndex = index;
       
-      this.streamer.writeLocalData(buffer, chunkData, 0);
+      // Fast JS-side copy without allocation to prevent GC spikes
+      new Uint8Array(arrayBuffer).set(new Uint8Array(data, sourceOffset, chunk.byteLength));
+      
+      buffer.unmap();
+      
       sourceOffset += chunk.byteLength;
     }
   }
 
   /**
-   * Releases all physical memory back to the GPU driver.
+   * Fast queue-based write
    */
-  public destroy(): void {
-    for (const buffer of this.hardwareBuffers) {
-      buffer.destroy();
+  public writeTensorDataQueue(tensor: PagedTensor, data: ArrayBuffer): void {
+    if (!this.streamer || !this.ringPool) throw new Error('Not initialized');
+    
+    let sourceOffset = 0;
+    
+    for (const chunk of tensor.chunks) {
+      const { buffer, index } = this.ringPool.acquireForQueue();
+      chunk.bufferIndex = index;
+      
+      // Pass the slice directly through the queue API offsets to avoid slice()
+      this.context.device!.queue.writeBuffer(
+        buffer, 
+        0, 
+        data, 
+        sourceOffset, 
+        chunk.byteLength
+      );
+      
+      sourceOffset += chunk.byteLength;
     }
-    this.hardwareBuffers = [];
+  }
+  
+  // Keep original for backwards compatibility
+  public writeTensorData(tensor: PagedTensor, data: ArrayBuffer): void {
+      this.writeTensorDataQueue(tensor, data);
+  }
+
+  public destroy(): void {
+    if (this.ringPool) {
+      this.ringPool.destroy();
+    }
   }
 }

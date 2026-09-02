@@ -1,12 +1,3 @@
-/**
- * ═══════════════════════════════════════════════════════════════════
- * VRAM Pager — WebGPU Context & Limit Negotiation
- * 
- * Manages device initialization and probes the browser's hidden 
- * memory limits (specifically maxStorageBufferBindingSize).
- * ═══════════════════════════════════════════════════════════════════
- */
-
 import { DeviceLimits } from '../types';
 
 export class WebGPUContext {
@@ -26,7 +17,6 @@ export class WebGPUContext {
       throw new Error('No appropriate GPU adapter found.');
     }
 
-    // Request the absolute maximum limits the browser will allow
     this.device = await adapter.requestDevice({
       requiredLimits: {
         maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
@@ -41,8 +31,7 @@ export class WebGPUContext {
       maxComputeWorkgroupSizeX: this.device.limits.maxComputeWorkgroupSizeX
     };
     
-    // Diagnostic output for hardware limits
     const limitMB = (this.limits.maxStorageBufferBindingSize / 1024 / 1024).toFixed(2);
-    console.log(\`[VRAM Pager] Hardware limit negotiated: Max Binding Size = \${limitMB} MB\`);
+    console.log(`[VRAM Pager] Hardware limit negotiated: Max Binding Size = ${limitMB} MB`);
   }
 }
