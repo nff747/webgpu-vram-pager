@@ -38,11 +38,15 @@ const mockAdapter = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  (global as any).navigator = {
-    gpu: {
-      requestAdapter: vi.fn().mockResolvedValue(mockAdapter),
-    }
-  };
+  Object.defineProperty(globalThis, 'navigator', {
+    value: {
+      gpu: {
+        requestAdapter: vi.fn().mockResolvedValue(mockAdapter),
+      }
+    },
+    configurable: true,
+    writable: true,
+  });
 });
 
 describe('PagerEngine', () => {

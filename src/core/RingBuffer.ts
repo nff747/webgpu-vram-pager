@@ -26,9 +26,15 @@ export class RingBufferPool {
   }
 
   private allocateBuffer(index: number): GPUBuffer {
+    // Section 5.2 of W3C WebGPU specification prohibits combining STORAGE and MAP_WRITE.
+    // Device compute storage buffers must use STORAGE | COPY_DST, while host mapped buffers use MAP_WRITE | COPY_SRC.
+    const usage = (GPUBufferUsage.MAP_WRITE && (this.device as any).__isStagingPool)
+      ? (GPUBufferUsage.MAP_WRITE | GPUBufferUsage.COPY_SRC)
+      : (GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
+
     const buf = this.device.createBuffer({
       size: this.bufferSize,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_WRITE,
+      usage: usage,
       label: `AdaptiveRingBuffer_Slab_${index}`
     });
     this.buffers[index] = buf;
