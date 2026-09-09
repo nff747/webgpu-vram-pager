@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>WebGPU VRAM Pager - Demo</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; background: #111; color: #eee; padding: 2rem; }
+    h1 { font-weight: 300; }
+    .budget-panel { border: 1px solid #444; padding: 1.5rem; border-radius: 8px; background: #1a1a1a; max-width: 600px; margin-top: 1rem; }
+    .bar { height: 24px; background: #333; border-radius: 12px; overflow: hidden; margin-top: 1rem; position: relative; }
+    .fill { height: 100%; background: linear-gradient(90deg, #007acc, #00d2ff); width: 0%; transition: width 0.3s ease; }
+    .text { position: absolute; top: 0; left: 10px; line-height: 24px; font-size: 12px; font-weight: bold; }
+    .controls { margin-top: 1rem; }
+    button { background: #007acc; color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; }
+    button:hover { background: #005a99; }
+  </style>
+</head>
+<body>
+  <h1>WebGPU VRAM Pager Monitoring</h1>
+  
+  <div class="budget-panel">
+    <h3>Real-Time Memory Budget</h3>
+    <div id="status">Initializing WebGPU...</div>
+    
+    <div class="bar">
+      <div id="vram-fill" class="fill"></div>
+      <div id="vram-text" class="text">0 MB / 0 MB</div>
+    </div>
+    
+    <div class="controls">
+      <button id="alloc-btn" disabled>Simulate 128MB Allocation</button>
+      <button id="free-btn" disabled>Free Memory</button>
+    </div>
+  </div>
+
+  <script type="module">
+    // Simulated demo script for memory budget monitoring
+    let totalVRAM = 1024 * 1024 * 1024; // 1GB
+    let allocated = 0;
+
+    const statusEl = document.getElementById('status');
+    const fillEl = document.getElementById('vram-fill');
+    const textEl = document.getElementById('vram-text');
+    const allocBtn = document.getElementById('alloc-btn');
+    const freeBtn = document.getElementById('free-btn');
+
+    async function init() {
+      if (!navigator.gpu) {
+        statusEl.innerText = 'WebGPU not supported in this browser.';
+        return;
+      }
+      
+      const adapter = await navigator.gpu.requestAdapter();
+      if (!adapter) {
+        statusEl.innerText = 'Failed to get WebGPU adapter.';
+        return;
+      }
+
+      statusEl.innerText = 'WebGPU initialized successfully. Monitoring ring buffer usage.';
+      allocBtn.disabled = false;
+      freeBtn.disabled = false;
+      updateUI();
+    }
+
+    function updateUI() {
+      const percentage = (allocated / totalVRAM) * 100;
+      fillEl.style.width = Math.min(percentage, 100) + '%';
+      
+      const allocMB = (allocated / (1024 * 1024)).toFixed(1);
+      const totalMB = (totalVRAM / (1024 * 1024)).toFixed(1);
+      textEl.innerText = `${allocMB} MB / ${totalMB} MB`;
+    }
+
+    allocBtn.addEventListener('click', () => {
+      allocated += 128 * 1024 * 1024;
+      if (allocated > totalVRAM) allocated = totalVRAM;
+      updateUI();
+    });
+
+    freeBtn.addEventListener('click', () => {
+      allocated -= 128 * 1024 * 1024;
+      if (allocated < 0) allocated = 0;
+      updateUI();
+    });
+
+    init();
+  </script>
+</body>
+</html>

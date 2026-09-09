@@ -2,7 +2,6 @@
 
 <img src="assets/banner.jpg" width="800" alt="Project Banner">
 
-
 # 🧠 webgpu-vram-pager
 
 **Dynamic Memory Paging & PCIe Streaming for Browser-Based LLMs**
@@ -14,22 +13,63 @@
 
 *Bypass browser `maxStorageBufferBindingSize` limits. Stream 8B parameter models across the PCIe bus. Run massive local AI on restricted hardware.*
 
-[The WebGPU Memory Death-Trap](#the-problem-the-webgpu-memory-death-trap) · [How It Works](#how-it-works-virtual-buffer-paging) · [API Usage](#api-usage) · [Integration](#integrating-with-webllm--onnx-web)
+[The Problem](#problem-statement) · [Quick Start](#quick-start) · [How It Works](#how-it-works-virtual-buffer-paging) · [API Reference](#api-reference) · [Use Cases](#use-cases)
 
 </div>
 
 ---
 
-## The Problem: The WebGPU Memory Death-Trap
+## Problem Statement
 
-Running local LLMs (like LLaMA 3 8B) in the browser is the holy grail of zero-cost, private AI. However, browsers artificially sandbox WebGPU to prevent rogue tabs from crashing graphics drivers.
+WebGPU OOM crashes when loading large AI models (>2GB) in-browser. Browsers artificially sandbox WebGPU to prevent rogue tabs from crashing graphics drivers by imposing strict `maxStorageBufferBindingSize` limits (often 128MB or 256MB). When you try to bind a 2GB model weight tensor, the browser throws an error and crashes. This library solves it by virtualizing the memory and streaming chunks.
 
-Even if you have an M3 Max with 128GB of Unified Memory, browsers like Chrome and Safari hard-cap the `maxStorageBufferBindingSize` (often strictly limited to **128MB** or **256MB**).
+---
 
-When WebLLM or Transformers.js tries to bind a 2GB model weight tensor to a compute shader for matrix multiplication, the browser throws:
-> `TypeError: Binding size is larger than the maximum binding size.`
+## Architecture Flow
 
-**Result:** The model crashes before generating a single token.
+```text
+[ NETWORK ]      [ SYSTEM RAM ]                   [ VRAM (GPU) ]
+    |                  |                                |
+[Safetensors] -- Fetch API Stream --> [ AETHEL-1 AI CORE ]
+                                                |
+                                      ( QUANTUM DATA SLICER )
+                                                |
+                              +-----------------------------------+
+                              |       DATA STREAM OF AI WEIGHTS   |
+                              v                                   v
+                      [ VRAM_CHIP 0 ]                    [ VRAM_CHIP 1 ]
+                      [ AI MEMORY MODULE ]               [ AI MEMORY MODULE ]
+                              |                                   |
+                      (Compute Pass)                     (Compute Pass)
+                              \                                 /
+                               \                               /
+                                [  ACCUMULATION BUFFER   ]
+```
+
+---
+
+## Quick Start
+
+```typescript
+import { VRAMPager, WeightStreamer } from 'webgpu-vram-pager';
+
+async function loadModel() {
+  // 1. Initialize the pager
+  const pager = new VRAMPager({ debug: true, ringBufferSize: 4 });
+  await pager.init();
+
+  // 2. Allocate a 2GB virtual tensor
+  const TWO_GB = 2 * 1024 * 1024 * 1024;
+  const pagedTensor = pager.allocatePagedTensor('llama_layers_0', TWO_GB);
+
+  // 3. Stream weights directly to VRAM
+  const device = pager.context.device;
+  const streamer = new WeightStreamer(device, pager.safeBindingLimit);
+  
+  await streamer.streamToBuffer('https://huggingface.co/model.safetensors', pagedTensor);
+  console.log('Model weights paged to VRAM successfully!');
+}
+```
 
 ---
 
@@ -37,78 +77,41 @@ When WebLLM or Transformers.js tries to bind a 2GB model weight tensor to a comp
 
 `webgpu-vram-pager` intercepts model allocation and virtualizes the GPU buffers. 
 
-1. **Hardware Probing:** It queries the absolute maximum limits allowed by the specific browser/OS combo.
-2. **Dynamic Chunking:** Instead of allocating a single 2GB tensor, it slices the model weights into an array of strictly compliant chunks (e.g., `8 × 256MB` buffers).
-3. **PCIe Streaming (`WeightStreamer`):** Using the `Fetch` API streaming reader, it pipes model weights directly from the network across the PCIe bus into the chunked `GPUBuffer` array using `device.queue.writeBuffer`. It bypasses holding the gigabytes of data in JS heap memory.
-4. **Paged Dispatch Orchestration (`ComputePipeline`):** During inference, instead of one massive compute dispatch, it orchestrates a ring-buffered pass. It binds Chunk 0 -> Compute -> Accumulates -> Binds Chunk 1 -> Compute... ensuring the shader never violates the binding limits while successfully completing the entire matrix multiplication.
+1. **Hardware Probing:** Queries absolute maximum limits allowed by browser/OS.
+2. **Dynamic Chunking:** Slices the model weights into compliant chunks (`8 × 256MB`).
+3. **PCIe Streaming:** Uses the `Fetch` API to pipe model weights directly from the network across the PCIe bus into `GPUBuffer` arrays using `device.queue.writeBuffer`.
+4. **Paged Dispatch Orchestration:** Binds Chunk 0 -> Compute -> Binds Chunk 1 -> Compute... ensuring the shader never violates binding limits.
 
 ---
 
-## API Usage
+## API Reference
 
-### 1. Installation
+### `VRAMPager` (formerly `PagerEngine`)
+The main engine for probing hardware limits, configuring the memory pool, and orchestrating virtual tensors.
+- `init()`: Probes the device limits.
+- `allocatePagedTensor(id, totalBytes)`: Creates a logical tensor partitioned into compliant physical chunks.
 
-```bash
-npm install webgpu-vram-pager
-```
+### `RingBuffer` (formerly `RingBufferPool`)
+Adaptive memory pool for recycling WebGPU buffers.
+- `acquireMapped()`: Gets a buffer ready for MAP_WRITE.
+- `acquireForQueue()`: Gets a buffer ready for queue writing.
 
-### 2. Initialize the Pager
+### `MemoryBudget`
+Interface representing real-time monitoring of WebGPU VRAM.
+- `totalVRAM`: Total theoretical memory.
+- `allocated`: Memory currently locked.
+- `available`: Memory ready to be acquired.
 
-```typescript
-import { PagerEngine } from 'webgpu-vram-pager';
-
-// The engine probes the browser limits and establishes a safe buffer size
-const engine = new PagerEngine({ debug: true });
-await engine.init();
-```
-
-### 3. Virtualize a Massive Tensor
-
-```typescript
-// Example: A 2GB weight tensor for an 8B parameter model
-const TWO_GB = 2 * 1024 * 1024 * 1024;
-
-// Automatically allocates the correct number of WebGPU chunks under the hood
-const pagedTensor = engine.allocatePagedTensor('llama_layers_0', TWO_GB);
-```
-
-### 4. Stream Weights over PCIe
-
-```typescript
-import { WeightStreamer } from 'webgpu-vram-pager';
-
-// The streamer pipes the network request directly to VRAM, chunk by chunk,
-// preventing browser JS heap Out-Of-Memory (OOM) crashes.
-const streamer = new WeightStreamer(device, engine.safeBindingLimit);
-await streamer.streamToBuffer('https://huggingface.co/.../model.safetensors', pagedTensor);
-```
-
-### 5. Execute Paged Compute Dispatch
-
-```typescript
-import { ComputePipeline } from 'webgpu-vram-pager';
-
-// Executes the WGSL compute shader by iterating over the physical chunks
-const pipelineManager = new ComputePipeline(device, engine, myComputePipeline);
-
-// Dispatch matrix multiplication safely
-pipelineManager.executePagedDispatch(
-  pagedTensor,      // Input virtualized tensor
-  outputBuffer,     // Accumulation buffer
-  workgroupCountX,
-  1, 1
-);
-```
+### `PageStrategy`
+Defines the eviction policy (`'lru' | 'fifo' | 'adaptive'`).
 
 ---
 
-## Integrating with WebLLM / ONNX Web
+## Use Cases
 
-`webgpu-vram-pager` is designed to be injected into the buffer allocation layer of existing frameworks.
-
-*For **WebLLM** (TVM)*: Override the `createBuffer` call inside the TVM WebGPU device manager to return a `PagedTensor` proxy instead of a native `GPUBuffer`. Update the `dispatch` command encoder to loop through the proxy's `chunks`.
-
-*For **ONNX Runtime Web***: Provide a custom Execution Provider (EP) hook that utilizes the `PagerEngine` for weight initialization.
+- **In-browser LLM inference:** Run LLaMA, Mistral, or WebLLM entirely locally without hitting memory limits.
+- **Large texture streaming:** Load gigapixel textures or massive satellite imagery in 3D maps.
+- **Real-time point cloud rendering:** Stream and compute on millions of LiDAR points on the fly.
 
 ---
 

@@ -25,3 +25,11 @@ export interface DeviceLimits {
   maxComputeInvocationsPerWorkgroup: number;
   maxComputeWorkgroupSizeX: number;
 }
+
+export interface MemoryBudget {
+  totalVRAM: number;
+  allocated: number;
+  available: number;
+}
+
+export type PageStrategy = 'lru' | 'fifo' | 'adaptive';
