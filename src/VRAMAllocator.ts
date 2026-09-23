@@ -47,4 +47,12 @@ export class VRAMAllocator {
     this.buffer.allocations.push(allocation);
     return allocation;
   }
+
+  free(allocationId: string): void {
+    const index = this.buffer.allocations.findIndex(a => a.id === allocationId);
+    if (index === -1) {
+      throw new Error(`Allocation ${allocationId} not found`);
+    }
+    this.buffer.allocations.splice(index, 1);
+  }
 }
