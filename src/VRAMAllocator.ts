@@ -77,4 +77,33 @@ export class VRAMAllocator {
     }
     alloc.isEvicted = true;
   }
+
+  restore(allocationId: string): void {
+    const alloc = this.buffer.allocations.find(a => a.id === allocationId);
+    if (!alloc) {
+      throw new Error(`Allocation ${allocationId} not found`);
+    }
+    if (!alloc.isEvicted) {
+      throw new Error(`Allocation ${allocationId} is not evicted`);
+    }
+
+    // Try to find space
+    this.buffer.allocations.sort((a, b) => a.offset - b.offset);
+    let currentOffset = 0;
+    for (const a of this.buffer.allocations) {
+      if (!a.isEvicted && a.id !== allocationId) {
+        if (currentOffset + alloc.size <= a.offset) {
+          break; // found space
+        }
+        currentOffset = Math.max(currentOffset, a.offset + a.size);
+      }
+    }
+
+    if (currentOffset + alloc.size > this.buffer.size) {
+      throw new Error("Out of memory during restore");
+    }
+
+    alloc.isEvicted = false;
+    alloc.offset = currentOffset;
+  }
 }
