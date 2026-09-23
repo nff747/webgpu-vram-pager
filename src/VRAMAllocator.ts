@@ -66,4 +66,15 @@ export class VRAMAllocator {
       }
     }
   }
+
+  evict(allocationId: string): void {
+    const alloc = this.buffer.allocations.find(a => a.id === allocationId);
+    if (!alloc) {
+      throw new Error(`Allocation ${allocationId} not found`);
+    }
+    if (alloc.isEvicted) {
+      throw new Error(`Allocation ${allocationId} is already evicted`);
+    }
+    alloc.isEvicted = true;
+  }
 }
