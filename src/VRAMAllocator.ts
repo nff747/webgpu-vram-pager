@@ -55,4 +55,15 @@ export class VRAMAllocator {
     }
     this.buffer.allocations.splice(index, 1);
   }
+
+  defragment(): void {
+    this.buffer.allocations.sort((a, b) => a.offset - b.offset);
+    let currentOffset = 0;
+    for (const alloc of this.buffer.allocations) {
+      if (!alloc.isEvicted) {
+        alloc.offset = currentOffset;
+        currentOffset += alloc.size;
+      }
+    }
+  }
 }
