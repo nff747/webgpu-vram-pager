@@ -1,35 +1,11 @@
-export interface PagerOptions {
-  /** Override the browser's reported max storage buffer binding size (in bytes) */
-  maxBufferSize?: number;
-  /** Number of buffers to keep in the ring pool for PCIe streaming */
-  ringBufferSize?: number;
-  /** Whether to log diagnostic memory information */
-  debug?: boolean;
-}
-
-export interface ChunkDescriptor {
+export interface Allocation {
   id: string;
-  byteOffset: number;
-  byteLength: number;
-  bufferIndex: number;
+  offset: number;
+  size: number;
+  isEvicted: boolean;
 }
 
-export interface PagedTensor {
-  id: string;
-  totalBytes: number;
-  chunks: ChunkDescriptor[];
+export interface VRAMBuffer {
+  size: number;
+  allocations: Allocation[];
 }
-
-export interface DeviceLimits {
-  maxStorageBufferBindingSize: number;
-  maxComputeInvocationsPerWorkgroup: number;
-  maxComputeWorkgroupSizeX: number;
-}
-
-export interface MemoryBudget {
-  totalVRAM: number;
-  allocated: number;
-  available: number;
-}
-
-export type PageStrategy = 'lru' | 'fifo' | 'adaptive';
