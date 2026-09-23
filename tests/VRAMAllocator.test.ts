@@ -40,4 +40,26 @@ describe('VRAMAllocator', () => {
     // Memory map should now be: [alloc1 (0-256)] [alloc3 (256-512)]
     expect(alloc3.offset).toBe(256);
   });
+
+  it('should handle eviction and restoration', () => {
+    const allocator = new VRAMAllocator(1024);
+    const alloc1 = allocator.allocate(512);
+    const alloc2 = allocator.allocate(512);
+    
+    // Buffer is full. Next allocation would fail.
+    expect(() => allocator.allocate(256)).toThrow("Out of memory");
+    
+    allocator.evict(alloc1.id);
+    expect(alloc1.isEvicted).toBe(true);
+    
+    const alloc3 = allocator.allocate(256);
+    expect(alloc3.offset).toBe(0); // Takes place of evicted alloc1
+    
+    // To restore alloc1, we might need to evict others or it might fail if full
+    expect(() => allocator.restore(alloc1.id)).toThrow("Out of memory during restore");
+    
+    allocator.evict(alloc2.id);
+    allocator.restore(alloc1.id);
+    expect(alloc1.isEvicted).toBe(false);
+  });
 });
