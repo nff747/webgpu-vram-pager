@@ -33,7 +33,7 @@
     "pcie",
     "browser-ai"
   ],
-  "author": "iKi <nff747@users.noreply.github.com>",
+  "author": "nff747 <nff747@users.noreply.github.com>",
   "license": "MIT",
   "devDependencies": {
     "@vitest/coverage-v8": "^4.1.11",
