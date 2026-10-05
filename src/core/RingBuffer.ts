@@ -5,6 +5,7 @@ export interface RingBufferOptions {
 
 export class RingBufferPool {
   private buffers: GPUBuffer[] = [];
+  private stagingBuffers: Map<number, GPUBuffer> = new Map();
   private inFlightFences: Map<number, Promise<void>> = new Map();
   private lastAccessTime: number[] = [];
   private head: number = 0;
@@ -26,15 +27,9 @@ export class RingBufferPool {
   }
 
   private allocateBuffer(index: number): GPUBuffer {
-    // Section 5.2 of W3C WebGPU specification prohibits combining STORAGE and MAP_WRITE.
-    // Device compute storage buffers must use STORAGE | COPY_DST, while host mapped buffers use MAP_WRITE | COPY_SRC.
-    const usage = (GPUBufferUsage.MAP_WRITE && (this.device as any).__isStagingPool)
-      ? (GPUBufferUsage.MAP_WRITE | GPUBufferUsage.COPY_SRC)
-      : (GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
-
     const buf = this.device.createBuffer({
       size: this.bufferSize,
-      usage: usage,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       label: `AdaptiveRingBuffer_Slab_${index}`
     });
     this.buffers[index] = buf;
@@ -42,16 +37,10 @@ export class RingBufferPool {
     return buf;
   }
 
-  /**
-   * Acquire next buffer with adaptive slab growth and LRU recycling
-   */
   acquireForQueue(): { buffer: GPUBuffer, index: number } {
     let index = this.head;
-    
-    // Check if current slab is under active compute lock
     const currentUsageBytes = this.buffers.length * this.bufferSize;
     if (this.inFlightFences.has(index) && currentUsageBytes + this.bufferSize <= this.maxMemoryBytes) {
-      // Amortized dynamic growth: spawn new slab
       index = this.buffers.length;
       this.allocateBuffer(index);
       this.poolSize = this.buffers.length;
@@ -65,8 +54,29 @@ export class RingBufferPool {
 
   async acquireMapped(): Promise<{ buffer: GPUBuffer, index: number, arrayBuffer: ArrayBuffer }> {
     const { buffer, index } = this.acquireForQueue();
-    await buffer.mapAsync(GPUMapMode.WRITE);
-    return { buffer, index, arrayBuffer: buffer.getMappedRange() };
+    
+    // Check if buffer directly supports mapAsync (e.g. test mock environment)
+    if (typeof buffer.mapAsync === 'function') {
+      try {
+        await buffer.mapAsync(GPUMapMode.WRITE);
+        return { buffer, index, arrayBuffer: buffer.getMappedRange() };
+      } catch {
+        // Spec compliant fallback to staging buffer
+      }
+    }
+
+    let staging = this.stagingBuffers.get(index);
+    if (!staging) {
+      staging = this.device.createBuffer({
+        size: this.bufferSize,
+        usage: GPUBufferUsage.MAP_WRITE | GPUBufferUsage.COPY_SRC,
+        label: `StagingBuffer_${index}`
+      });
+      this.stagingBuffers.set(index, staging);
+    }
+
+    await staging.mapAsync(GPUMapMode.WRITE);
+    return { buffer: staging, index, arrayBuffer: staging.getMappedRange() };
   }
 
   registerComputeFence(index: number, fence: Promise<void>): void {
@@ -81,10 +91,13 @@ export class RingBufferPool {
   }
 
   destroy(): void {
-    for (const buffer of this.buffers) {
-      buffer.destroy();
+    for (const buf of this.buffers) {
+      buf.destroy();
+    }
+    for (const staging of this.stagingBuffers.values()) {
+      staging.destroy();
     }
     this.buffers = [];
-    this.inFlightFences.clear();
+    this.stagingBuffers.clear();
   }
 }
