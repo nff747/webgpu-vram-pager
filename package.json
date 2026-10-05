@@ -34,7 +34,7 @@
     "browser-ai"
   ],
   "author": "nff747 <nff747@users.noreply.github.com>",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "devDependencies": {
     "@vitest/coverage-v8": "^4.1.11",
     "@webgpu/types": "^0.1.72",
