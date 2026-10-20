@@ -31,6 +31,18 @@ export class PagerEngine {
     }
   }
 
+  public getSafeBindingLimit(): number {
+    return this.safeBindingLimit;
+  }
+
+  public isInitialized(): boolean {
+    return this.context.device !== null && this.ringPool !== null;
+  }
+
+  public getRingPool(): RingBufferPool | null {
+    return this.ringPool;
+  }
+
   public allocatePagedTensor(id: string, totalBytes: number): PagedTensor {
     if (!this.context.device || !this.ringPool) throw new Error('Pager not initialized');
     
