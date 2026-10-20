@@ -62,4 +62,28 @@ describe('VRAMAllocator', () => {
     allocator.restore(alloc1.id);
     expect(alloc1.isEvicted).toBe(false);
   });
+
+  it('enforces 256-byte alignment on allocation offsets', () => {
+    const allocator = new VRAMAllocator(4096);
+    const a1 = allocator.allocate(100, 256);
+    expect(a1.offset).toBe(0);
+    const a2 = allocator.allocate(100, 256);
+    // a1 ended at 100, next aligned offset should be 256
+    expect(a2.offset).toBe(256);
+  });
+
+  it('calculates fragmentation ratio accurately when gaps exist', () => {
+    const allocator = new VRAMAllocator(1000);
+    // 0% fragmented when empty
+    expect(allocator.getFragmentationRatio()).toBe(0);
+
+    const a1 = allocator.allocate(200, 1);
+    const a2 = allocator.allocate(200, 1);
+    const a3 = allocator.allocate(200, 1);
+    // Free a2 (gap of 200 in the middle)
+    allocator.free(a2.id);
+    // Free memory = 600 (a2 gap 200 + end gap 400). Largest contiguous block is 400.
+    // Frag ratio = 1 - (400 / 600) = 0.333...
+    expect(allocator.getFragmentationRatio()).toBeCloseTo(0.333, 2);
+  });
 });
