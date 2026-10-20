@@ -15,6 +15,19 @@ export class VRAMAllocator {
     return this.buffer.size;
   }
 
+  getAvailableMemory(): number {
+    const allocated = this.buffer.allocations
+      .filter(a => !a.isEvicted)
+      .reduce((sum, a) => sum + a.size, 0);
+    return Math.max(0, this.buffer.size - allocated);
+  }
+
+  getAllocatedMemory(): number {
+    return this.buffer.allocations
+      .filter(a => !a.isEvicted)
+      .reduce((sum, a) => sum + a.size, 0);
+  }
+
   allocate(size: number): Allocation {
     if (size > this.buffer.size) {
       throw new Error("Allocation size exceeds total buffer size");
