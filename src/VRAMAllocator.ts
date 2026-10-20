@@ -28,7 +28,35 @@ export class VRAMAllocator {
       .reduce((sum, a) => sum + a.size, 0);
   }
 
-  allocate(size: number): Allocation {
+  getFragmentationRatio(): number {
+    const freeMemory = this.getAvailableMemory();
+    if (freeMemory === 0) return 0;
+
+    let largestContiguousBlock = 0;
+    let currentOffset = 0;
+    const sorted = [...this.buffer.allocations].filter(a => !a.isEvicted).sort((a, b) => a.offset - b.offset);
+
+    for (const alloc of sorted) {
+      const gap = alloc.offset - currentOffset;
+      if (gap > largestContiguousBlock) {
+        largestContiguousBlock = gap;
+      }
+      currentOffset = Math.max(currentOffset, alloc.offset + alloc.size);
+    }
+    const finalGap = this.buffer.size - currentOffset;
+    if (finalGap > largestContiguousBlock) {
+      largestContiguousBlock = finalGap;
+    }
+
+    return Math.max(0, Math.min(1, 1 - (largestContiguousBlock / freeMemory)));
+  }
+
+  private align(value: number, alignment: number): number {
+    if (alignment <= 1) return value;
+    return Math.ceil(value / alignment) * alignment;
+  }
+
+  allocate(size: number, alignment: number = 256): Allocation {
     if (size > this.buffer.size) {
       throw new Error("Allocation size exceeds total buffer size");
     }
@@ -38,7 +66,9 @@ export class VRAMAllocator {
 
     let currentOffset = 0;
     for (const alloc of this.buffer.allocations) {
-      if (!alloc.isEvicted && currentOffset + size <= alloc.offset) {
+      const alignedOffset = this.align(currentOffset, alignment);
+      if (!alloc.isEvicted && alignedOffset + size <= alloc.offset) {
+        currentOffset = alignedOffset;
         break; // found space
       }
       if (!alloc.isEvicted) {
@@ -46,6 +76,7 @@ export class VRAMAllocator {
       }
     }
 
+    currentOffset = this.align(currentOffset, alignment);
     if (currentOffset + size > this.buffer.size) {
       throw new Error("Out of memory");
     }
