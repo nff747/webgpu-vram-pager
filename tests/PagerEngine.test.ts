@@ -106,4 +106,19 @@ describe('PagerEngine', () => {
     expect(tensor.chunks[1].bufferIndex).toBe(1);
     expect(tensor.chunks[2].bufferIndex).toBe(0); // ring buffer wraps around
   });
+
+  it('correctly reports initialization status and hardware binding limits', async () => {
+    const pager = new PagerEngine({ maxBufferSize: 1024 });
+    expect(pager.isInitialized()).toBe(false);
+    await pager.init();
+    expect(pager.isInitialized()).toBe(true);
+    expect(pager.getSafeBindingLimit()).toBe(1024);
+    expect(pager.getRingPool()).toBeDefined();
+  });
+
+  it('safely disposes ring buffer pool on destroy()', async () => {
+    const pager = new PagerEngine();
+    await pager.init();
+    expect(() => pager.destroy()).not.toThrow();
+  });
 });
