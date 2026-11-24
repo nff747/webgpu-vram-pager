@@ -33,7 +33,7 @@
     "pcie",
     "browser-ai"
   ],
-  "author": "nff747 <nff747@users.noreply.github.com>",
+  "author": "Lunar Paradox <engineering@lunarparadox.com>",
   "license": "Apache-2.0",
   "devDependencies": {
     "@webgpu/types": "^0.1.72",
@@ -50,5 +50,5 @@
   "bugs": {
     "url": "https://github.com/nff747/webgpu-vram-pager/issues"
   },
-  "homepage": "https://github.com/nff747/webgpu-vram-pager#readme"
+  "homepage": "https://lunarparadox.com"
 }
